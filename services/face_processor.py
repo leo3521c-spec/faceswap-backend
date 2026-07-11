@@ -221,6 +221,7 @@ def process_frame(frame_bytes: bytes, source_face) -> FrameResult:
 
     # ── 2 · Face Tracking (detection or optical-flow tracking) ──
     faces, tracking = face_tracker.update(frame)
+    logger.info("Face detected: %d face(s), tracking=%s", len(faces), tracking["state"])
 
     if not faces:
         # No face — pass through original to keep stream smooth
@@ -257,6 +258,7 @@ def process_frame(frame_bytes: bytes, source_face) -> FrameResult:
         swapped = model_manager.swapper.get(
             result, face, source_face, paste_back=True
         )
+        logger.info("Face swapped: track=%s, score=%.3f", getattr(face, 'track_id', '?'), float(face.det_score))
         expression_corrected, expr_info = expression_manager.preserve_expression(
             frame, swapped, face
         )
@@ -284,6 +286,7 @@ def process_frame(frame_bytes: bytes, source_face) -> FrameResult:
 
     # ── 7 · Encode JPEG ─────────────────────────────────────
     result_bytes = encode_jpeg(result, settings.jpeg_quality)
+    logger.info("Frame encoded: %d bytes, total inference=%.1fms", len(result_bytes), (time.perf_counter() - t_start) * 1000)
     inference_ms = (time.perf_counter() - t_start) * 1000
 
     # Track inference speed on the GPU manager
