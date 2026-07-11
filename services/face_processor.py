@@ -96,17 +96,9 @@ class FrameResult:
 
 
 def decode_jpeg(data: bytes) -> np.ndarray | None:
-    """Decode JPEG bytes into a BGR numpy array.
-
-    Uses pinned memory for the source buffer when available,
-    enabling faster CPU→GPU transfers during ONNX inference.
-    """
-    # Copy bytes into a pinned numpy buffer for fast H2D transfer
-    buf = gpu_manager.get_pinned_array(len(data), dtype=np.uint8)
-    buf[:] = np.frombuffer(data, dtype=np.uint8)
-    frame = cv2.imdecode(buf, cv2.IMREAD_COLOR)
-    gpu_manager.return_pinned_array(buf)
-    return frame
+    """Decode JPEG bytes into a BGR numpy array."""
+    buf = np.frombuffer(data, dtype=np.uint8)
+    return cv2.imdecode(buf, cv2.IMREAD_COLOR)
 
 
 def encode_jpeg(frame: np.ndarray, quality: int = 85) -> bytes:
