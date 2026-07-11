@@ -38,7 +38,7 @@ class Settings(BaseSettings):
     # ── GPU / ONNX ──────────────────────────────────────────
     gpu_device_id: int = -1  # -1 = auto-select best GPU
     gpu_mem_limit_mb: int = 4096
-    enable_tensorrt: bool = True  # TensorRT preferred → CUDA → CPU
+    enable_tensorrt: bool = False  # TensorRT not installed on RunPod — use CUDA EP
     enable_fp16: bool = True
     enable_cuda_graph: bool = True
     enable_pinned_memory: bool = True

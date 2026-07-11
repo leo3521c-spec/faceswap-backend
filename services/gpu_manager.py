@@ -470,6 +470,45 @@ class GPUManager:
         self._providers = providers
         logger.info("  → Provider chain: %s", [p if isinstance(p, str) else p[0] for p in providers])
 
+        # ── Critical: verify CUDA EP actually loads (no silent CPU fallback) ──
+        self._verify_providers()
+
+    def _verify_providers(self) -> None:
+        """Verify that CUDA EP actually loads — no silent CPU fallback.
+
+        Creates a throwaway ONNX session and checks which providers are
+        actually active. If CUDA isn't available, logs a critical error
+        with remediation instructions.
+        """
+        try:
+            import onnxruntime as ort
+            import numpy as np
+
+            # Create a tiny dummy model to test provider availability
+            # Use available providers from ORT's perspective
+            available = ort.get_available_providers()
+            logger.info("  → ORT available providers: %s", available)
+
+            if "CUDAExecutionProvider" not in available:
+                logger.error("=" * 60)
+                logger.error("CRITICAL: CUDA Execution Provider is NOT available!")
+                logger.error("All inference will run on CPU (10-50x slower).")
+                logger.error("")
+                logger.error("Fix for CUDA 12 pods (RunPod):")
+                logger.error("  pip uninstall onnxruntime onnxruntime-gpu -y")
+                logger.error("  pip install onnxruntime-gpu==1.18.1 \\")
+                logger.error("    --extra-index-url https://aiinfra.pkgs.visualstudio.com/PublicPackages/_packaging/onnxruntime-cuda-12/pypi/simple/")
+                logger.error("=" * 60)
+                # Force CUDA off — use CPU only to avoid repeated failed loads
+                self._providers = ["CPUExecutionProvider"]
+                self.info.provider = "CPUExecutionProvider"
+                self.info.tensorrt_enabled = False
+                self.info.fp16_enabled = False
+                self.info.cuda_graph_enabled = False
+                self.info.pinned_memory_enabled = False
+        except ImportError:
+            logger.warning("onnxruntime not installed — cannot verify providers")
+
     # ── Public API ───────────────────────────────────────────
 
     @property

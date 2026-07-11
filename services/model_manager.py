@@ -570,8 +570,11 @@ class ModelManager:
                 elapsed,
                 active_providers,
             )
-            if "CPUExecutionProvider" in active_providers and "CUDAExecutionProvider" not in active_providers:
-                logger.error("  ⚠ InSwapper is running on CPU! Check CUDA/TensorRT installation.")
+            if "CUDAExecutionProvider" not in active_providers:
+                logger.error("=" * 60)
+                logger.error("CRITICAL: InSwapper is running on CPU, not GPU!")
+                logger.error("Install CUDA 12 onnxruntime-gpu (see requirements.txt)")
+                logger.error("=" * 60)
         except Exception as exc:
             meta.status = ModelStatus.ERROR
             meta.last_error = str(exc)
