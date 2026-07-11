@@ -209,7 +209,10 @@ def process_frame(frame_bytes: bytes, source_face) -> FrameResult:
     t_start = time.perf_counter()
 
     # ── 1 · Decode ──────────────────────────────────────────
+    t_step = time.perf_counter()
     frame = decode_jpeg(frame_bytes)
+    logger.info("  [1] Decode: %.1fms", (time.perf_counter() - t_step) * 1000)
+
     if frame is None:
         return FrameResult(
             jpeg_bytes=frame_bytes,
@@ -220,11 +223,12 @@ def process_frame(frame_bytes: bytes, source_face) -> FrameResult:
         )
 
     # ── 2 · Face Tracking (detection or optical-flow tracking) ──
+    t_step = time.perf_counter()
     faces, tracking = face_tracker.update(frame)
-    logger.info("Face detected: %d face(s), tracking=%s", len(faces), tracking["state"])
+    logger.info("  [2] Face tracking: %.1fms — %d face(s), state=%s",
+                (time.perf_counter() - t_step) * 1000, len(faces), tracking["state"])
 
     if not faces:
-        # No face — pass through original to keep stream smooth
         result_bytes = encode_jpeg(frame, settings.jpeg_quality)
         return FrameResult(
             jpeg_bytes=result_bytes,
@@ -239,55 +243,63 @@ def process_frame(frame_bytes: bytes, source_face) -> FrameResult:
     face_scores = [f.confidence for f in faces]
     best_confidence = max(face_scores)
 
-    # ── 3 · Face Alignment ──────────────────────────────────
-    # Pre-compute alignment matrices for logging / diagnostics.
-    # InSwapper uses the same kps landmarks internally for its
-    # affine warp, so we pass the full frame + face object.
-    for face in faces:
-        aligned, _ = align_face(frame, face.kps, size=128)
-        if aligned is None:
-            logger.warning("Alignment failed for face score %.3f", face.det_score)
+    # NOTE: align_face removed — InSwapper does its own internal alignment
+    # via face.kps. The previous call was wasted computation (result unused).
 
-    # ── 4 · InSwapper 128 + 5 · Expression Preservation + 6 · Masking ──
-    # Swap → preserve original expressions → semantic masking for
-    # hair/beard/neck/ear/glasses preservation + seamless blending.
+    # ── 3 · InSwapper + Expression + Masking ────────────────
     result = frame
     masking_infos = []
     expression_infos = []
     for face in faces:
+        t_swap = time.perf_counter()
         swapped = model_manager.swapper.get(
             result, face, source_face, paste_back=True
         )
-        logger.info("Face swapped: track=%s, score=%.3f", getattr(face, 'track_id', '?'), float(face.det_score))
+        logger.info("  [3a] Swap: %.1fms — track=%s, score=%.3f",
+                    (time.perf_counter() - t_swap) * 1000,
+                    getattr(face, 'track_id', '?'), float(face.det_score))
+
+        t_expr = time.perf_counter()
         expression_corrected, expr_info = expression_manager.preserve_expression(
             frame, swapped, face
         )
+        logger.info("  [3b] Expression: %.1fms — method=%s",
+                    (time.perf_counter() - t_expr) * 1000,
+                    expr_info.get("method", "?"))
+
+        t_mask = time.perf_counter()
         result, mask_info = face_masking_manager.blend_face(
             result, expression_corrected, face
         )
+        logger.info("  [3c] Masking: %.1fms — method=%s",
+                    (time.perf_counter() - t_mask) * 1000,
+                    mask_info.get("method", "?"))
         masking_infos.append(mask_info)
         expression_infos.append(expr_info)
 
-    # ── 5 · Adaptive Enhancement (GFPGAN / CodeFormer) ──────
-    # Assess quality and enhance only when needed. Mode is
-    # switchable at runtime via enhancement_manager.set_mode().
+    # ── 4 · Adaptive Enhancement ────────────────────────────
+    t_enh = time.perf_counter()
     face_crop = None
     if faces:
-        # Use the first face's bbox region for quality assessment
         bbox = faces[0].bbox.astype(int)
         h, w = result.shape[:2]
         x1, y1 = max(0, bbox[0]), max(0, bbox[1])
         x2, y2 = min(w, bbox[2]), min(h, bbox[3])
         if x2 > x1 and y2 > y1:
             face_crop = result[y1:y2, x1:x2]
-
     result, enh_info = enhancement_manager.enhance(result, face_crop)
+    logger.info("  [4] Enhancement: %.1fms — enhanced=%s, enhancer=%s, quality=%s",
+                (time.perf_counter() - t_enh) * 1000,
+                enh_info["enhanced"], enh_info.get("enhancer"), enh_info.get("quality"))
     enhanced = enh_info["enhanced"]
 
-    # ── 7 · Encode JPEG ─────────────────────────────────────
+    # ── 5 · Encode JPEG ─────────────────────────────────────
+    t_enc = time.perf_counter()
     result_bytes = encode_jpeg(result, settings.jpeg_quality)
-    logger.info("Frame encoded: %d bytes, total inference=%.1fms", len(result_bytes), (time.perf_counter() - t_start) * 1000)
+    logger.info("  [5] Encode: %.1fms — %d bytes",
+                (time.perf_counter() - t_enc) * 1000, len(result_bytes))
     inference_ms = (time.perf_counter() - t_start) * 1000
+    logger.info("  TOTAL inference: %.1fms", inference_ms)
 
     # Track inference speed on the GPU manager
     gpu_manager.record_inference(inference_ms)
