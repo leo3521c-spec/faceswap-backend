@@ -36,18 +36,37 @@ echo "  ✓ Docker Compose ready"
 # Start Docker daemon if not running (RunPod doesn't auto-start it)
 if ! docker info &> /dev/null; then
     echo "  Starting Docker daemon..."
-    dockerd > /tmp/dockerd.log 2>&1 &
-    sleep 5
-    # Wait up to 30s for daemon to be ready
-    for i in $(seq 1 12); do
+    
+    # Try method 1: service command
+    service docker start > /tmp/dockerd.log 2>&1 || true
+    sleep 3
+    
+    # If still not running, try method 2: dockerd with DinD-compatible flags
+    if ! docker info &> /dev/null; then
+        echo "  Trying direct dockerd with container-compatible flags..."
+        dockerd \
+            --host=unix:///var/run/docker.sock \
+            --storage-driver=vfs \
+            --iptables=false \
+            --ip-masq=false \
+            > /tmp/dockerd.log 2>&1 &
+        sleep 5
+    fi
+    
+    # Wait up to 40s for daemon to be ready
+    for i in $(seq 1 20); do
         if docker info &> /dev/null; then
             echo "  ✓ Docker daemon started"
             break
         fi
         sleep 2
     done
+    
     if ! docker info &> /dev/null; then
-        echo "  ✗ Docker daemon failed to start. Check /tmp/dockerd.log"
+        echo "  ✗ Docker daemon failed to start."
+        echo "  ── Last 30 lines of dockerd log ──"
+        tail -30 /tmp/dockerd.log 2>/dev/null || echo "  (no log found)"
+        echo "  ──────────────────────────────────"
         exit 1
     fi
 else
