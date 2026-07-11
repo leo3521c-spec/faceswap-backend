@@ -48,6 +48,8 @@ if ! docker info &> /dev/null; then
             --host=unix:///var/run/docker.sock \
             --storage-driver=vfs \
             --iptables=false \
+            --ip6tables=false \
+            --bridge=none \
             --ip-masq=false \
             > /tmp/dockerd.log 2>&1 &
         sleep 5
