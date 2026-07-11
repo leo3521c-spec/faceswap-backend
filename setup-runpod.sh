@@ -24,16 +24,35 @@ echo "Step 2: Checking Docker..."
 if ! command -v docker &> /dev/null; then
     echo "  Installing Docker..."
     curl -fsSL https://get.docker.com | sh
-    # Already root on RunPod — no sudo needed
-    :
 fi
-echo "  ✓ Docker ready"
+echo "  ✓ Docker installed"
 
 if ! docker compose version &> /dev/null; then
     echo "  Installing Docker Compose..."
     apt-get update && apt-get install -y docker-compose-plugin
 fi
 echo "  ✓ Docker Compose ready"
+
+# Start Docker daemon if not running (RunPod doesn't auto-start it)
+if ! docker info &> /dev/null; then
+    echo "  Starting Docker daemon..."
+    dockerd > /tmp/dockerd.log 2>&1 &
+    sleep 5
+    # Wait up to 30s for daemon to be ready
+    for i in $(seq 1 12); do
+        if docker info &> /dev/null; then
+            echo "  ✓ Docker daemon started"
+            break
+        fi
+        sleep 2
+    done
+    if ! docker info &> /dev/null; then
+        echo "  ✗ Docker daemon failed to start. Check /tmp/dockerd.log"
+        exit 1
+    fi
+else
+    echo "  ✓ Docker daemon already running"
+fi
 
 # ── Step 3: Download AI Models ────────────────────────────────
 echo "Step 3: Downloading AI models..."
