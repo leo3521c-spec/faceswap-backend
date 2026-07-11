@@ -106,7 +106,7 @@ MODEL_REGISTRY: list[dict] = [
         "version": "1.0.0",
         "category": "swapper",
         "path": "models/inswapper_128.onnx",
-        "url": "https://huggingface.co/ezk77/inswapper_128/resolve/main/inswapper_128.onnx",
+        "url": "https://huggingface.co/ezioruan/inswapper_128.onnx/resolve/main/inswapper_128.onnx",
         "sha256": None,  # populated after first download for cache
         "optional": False,
     },

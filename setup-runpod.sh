@@ -41,7 +41,7 @@ mkdir -p models
 if [ ! -f "models/inswapper_128.onnx" ]; then
     echo "  Downloading InSwapper 128 model (~530MB)..."
     curl -L --progress-bar -o models/inswapper_128.onnx \
-        https://huggingface.co/ezk77/inswapper_128/resolve/main/inswapper_128.onnx
+        https://huggingface.co/ezioruan/inswapper_128.onnx/resolve/main/inswapper_128.onnx
     if [ -s models/inswapper_128.onnx ]; then
         echo "  ✓ InSwapper model downloaded"
     else
