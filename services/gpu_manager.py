@@ -426,6 +426,9 @@ class GPUManager:
 
         # TensorRT Execution Provider (highest priority)
         if settings.enable_tensorrt:
+            import os
+            cache_path = settings.trt_engine_cache_path
+            os.makedirs(cache_path, exist_ok=True)
             trt_opts: dict[str, Any] = {
                 "device_id": self.info.device_id,
                 "trt_fp16_enable": settings.enable_fp16,
@@ -434,10 +437,12 @@ class GPUManager:
                 ),
                 "trt_max_partition_iterations": 1000,
                 "trt_min_subgraph_size": 5,
+                "trt_engine_cache_enable": True,
+                "trt_engine_cache_path": os.path.abspath(cache_path),
             }
             providers.insert(0, ("TensorrtExecutionProvider", trt_opts))
             self.info.tensorrt_enabled = True
-            logger.info("  ✓ TensorRT execution provider enabled")
+            logger.info("  ✓ TensorRT execution provider enabled (cache: %s)", cache_path)
         else:
             logger.info("  ⊘ TensorRT disabled in settings")
 

@@ -106,7 +106,7 @@ MODEL_REGISTRY: list[dict] = [
         "version": "1.0.0",
         "category": "swapper",
         "path": "models/inswapper_128.onnx",
-        "url": "https://huggingface.co/ezioruan/inswapper_128.onnx/resolve/main/inswapper_128.onnx",
+        "url": "https://huggingface.co/ezkao/inswapper_128.onnx/resolve/main/inswapper_128.onnx",
         "sha256": None,  # populated after first download for cache
         "optional": False,
     },
@@ -117,36 +117,6 @@ MODEL_REGISTRY: list[dict] = [
         "category": "enhancer",
         "path": "models/GFPGANv1.4.pth",
         "url": "https://github.com/TencentARC/GFPGAN/releases/download/v1.3.4/GFPGANv1.4.pth",
-        "sha256": None,
-        "optional": True,
-    },
-    {
-        "key": "codeformer",
-        "display_name": "CodeFormer",
-        "version": "0.1.0",
-        "category": "enhancer",
-        "path": "models/codeformer.pth",
-        "url": "https://github.com/sczhou/CodeFormer/releases/download/v0.1.0/codeformer.pth",
-        "sha256": None,
-        "optional": True,
-    },
-    {
-        "key": "liveportrait",
-        "display_name": "LivePortrait",
-        "version": "0.1.0",
-        "category": "expression",
-        "path": "models/liveportrait",
-        "url": None,  # LivePortrait is a multi-model bundle; download separately
-        "sha256": None,
-        "optional": True,
-    },
-    {
-        "key": "face_parser",
-        "display_name": "Face Parser (BiSeNet)",
-        "version": "1.0.0",
-        "category": "parser",
-        "path": "models/face_parsing_512.onnx",
-        "url": "https://huggingface.co/onnx-community/face-parsing/resolve/main/onnx/model.onnx",
         "sha256": None,
         "optional": True,
     },
@@ -194,8 +164,6 @@ class ModelManager:
         self.detector = None
         self.swapper = None
         self.enhancers: dict[str, Any] = {}  # key → instance
-        self.liveportrait = None
-        self.face_parser = None
 
         self._loaded = False
 
@@ -227,9 +195,6 @@ class ModelManager:
         self._load_insightface()
         self._load_inswapper()
         self._load_gfpgan()
-        self._load_codeformer()
-        self._load_liveportrait()
-        self._load_face_parser()
 
         # 4 · GPU warmup
         self.warmup_models()
@@ -496,38 +461,6 @@ class ModelManager:
                 logger.warning("  ⚠ %s warmup skipped: %s", self.models[key].display_name, exc)
                 report[key] = {"warmed_up": False, "error": str(exc)}
 
-        # Face parser warmup
-        if self.face_parser is not None:
-            start = time.perf_counter()
-            try:
-                dummy_input = np.zeros((1, 3, 512, 512), dtype=np.float32)
-                input_name = self.face_parser.get_inputs()[0].name
-                self.face_parser.run(None, {input_name: dummy_input})
-                elapsed = (time.perf_counter() - start) * 1000
-                self.models["face_parser"].warmup_time_ms = round(elapsed, 2)
-                self.models["face_parser"].status = ModelStatus.WARMED_UP
-                logger.info("  🔥 Face Parser warmed up in %.1f ms", elapsed)
-                report["face_parser"] = {"warmed_up": True, "time_ms": round(elapsed, 2)}
-            except Exception as exc:
-                logger.warning("  ⚠ Face Parser warmup skipped: %s", exc)
-                report["face_parser"] = {"warmed_up": False, "error": str(exc)}
-
-        # LivePortrait warmup
-        if self.liveportrait is not None:
-            start = time.perf_counter()
-            try:
-                # LivePortrait warmup depends on its API; just trigger a dummy call
-                if hasattr(self.liveportrait, "warmup"):
-                    self.liveportrait.warmup()
-                elapsed = (time.perf_counter() - start) * 1000
-                self.models["liveportrait"].warmup_time_ms = round(elapsed, 2)
-                self.models["liveportrait"].status = ModelStatus.WARMED_UP
-                logger.info("  🔥 LivePortrait warmed up in %.1f ms", elapsed)
-                report["liveportrait"] = {"warmed_up": True, "time_ms": round(elapsed, 2)}
-            except Exception as exc:
-                logger.warning("  ⚠ LivePortrait warmup skipped: %s", exc)
-                report["liveportrait"] = {"warmed_up": False, "error": str(exc)}
-
         return report
 
     def get_model_status(self) -> dict:
@@ -547,8 +480,6 @@ class ModelManager:
                 "detector": self.detector is not None,
                 "swapper": self.swapper is not None,
                 "enhancers": list(self.enhancers.keys()),
-                "liveportrait": self.liveportrait is not None,
-                "face_parser": self.face_parser is not None,
             },
         }
 
@@ -602,7 +533,12 @@ class ModelManager:
                 raise
 
     def _load_inswapper(self) -> None:
-        """Load InSwapper 128 via ONNX Runtime."""
+        """Load InSwapper 128 via ONNX Runtime with GPU providers.
+
+        Critical: insightface's get_model() defaults to CPUExecutionProvider.
+        We must override the session with our TensorRT → CUDA → CPU chain,
+        otherwise swap runs on CPU (2800ms instead of ~20ms).
+        """
         meta = self.models["inswapper_128"]
         if not meta.enabled:
             return
@@ -611,6 +547,7 @@ class ModelManager:
         start = time.perf_counter()
 
         try:
+            import onnxruntime as ort
             from insightface.model_zoo import get_model as get_insightface_model
 
             path = self.settings.inswapper_model_path
@@ -618,14 +555,23 @@ class ModelManager:
                 raise FileNotFoundError(f"InSwapper model not found: {path}")
 
             self.swapper = get_insightface_model(path, download=False)
+
+            # Override the session with our GPU provider chain
+            session = ort.InferenceSession(path, providers=gpu_manager.providers)
+            self.swapper.session = session
+
+            active_providers = session.get_providers()
             elapsed = (time.perf_counter() - start) * 1000
             meta.load_time_ms = round(elapsed, 2)
             meta.status = ModelStatus.READY
             logger.info(
-                "  ✓ %s loaded in %.1f ms",
+                "  ✓ %s loaded in %.1f ms — providers: %s",
                 meta.display_name,
                 elapsed,
+                active_providers,
             )
+            if "CPUExecutionProvider" in active_providers and "CUDAExecutionProvider" not in active_providers:
+                logger.error("  ⚠ InSwapper is running on CPU! Check CUDA/TensorRT installation.")
         except Exception as exc:
             meta.status = ModelStatus.ERROR
             meta.last_error = str(exc)
@@ -653,127 +599,6 @@ class ModelManager:
                 upscale=1,
                 arch="clean",
                 channel_multiplier=2,
-            )
-            elapsed = (time.perf_counter() - start) * 1000
-            meta.load_time_ms = round(elapsed, 2)
-            meta.status = ModelStatus.READY
-            logger.info(
-                "  ✓ %s loaded in %.1f ms",
-                meta.display_name,
-                elapsed,
-            )
-        except Exception as exc:
-            meta.status = ModelStatus.ERROR
-            meta.last_error = str(exc)
-            logger.warning("  ⚠ %s load failed: %s", meta.display_name, exc)
-
-    def _load_codeformer(self) -> None:
-        """Load CodeFormer for face restoration (optional)."""
-        meta = self.models["codeformer"]
-        if not meta.enabled or not os.path.exists(meta.path):
-            if meta.enabled:
-                logger.info("  ⊘ %s — model file not found, skipping", meta.display_name)
-            meta.status = ModelStatus.DISABLED
-            return
-
-        meta.status = ModelStatus.LOADING
-        start = time.perf_counter()
-
-        try:
-            # CodeFormer loading via inference_runner
-            # Fallback: load as ONNX if .onnx extension
-            if meta.path.endswith(".onnx"):
-                import onnxruntime as ort
-                self.enhancers["codeformer"] = ort.InferenceSession(
-                    meta.path,
-                    providers=gpu_manager.providers,
-                )
-            else:
-                # Try the Python package
-                try:
-                    from codeformer import CodeFormer
-                    self.enhancers["codeformer"] = CodeFormer(model_path=meta.path)
-                except ImportError:
-                    logger.warning(
-                        "  ⚠ %s — codeformer package not installed, skipping",
-                        meta.display_name,
-                    )
-                    meta.status = ModelStatus.DISABLED
-                    return
-
-            elapsed = (time.perf_counter() - start) * 1000
-            meta.load_time_ms = round(elapsed, 2)
-            meta.status = ModelStatus.READY
-            logger.info(
-                "  ✓ %s loaded in %.1f ms",
-                meta.display_name,
-                elapsed,
-            )
-        except Exception as exc:
-            meta.status = ModelStatus.ERROR
-            meta.last_error = str(exc)
-            logger.warning("  ⚠ %s load failed: %s", meta.display_name, exc)
-
-    def _load_liveportrait(self) -> None:
-        """Load LivePortrait for expression transfer (optional)."""
-        meta = self.models["liveportrait"]
-        if not meta.enabled or not os.path.exists(meta.path):
-            if meta.enabled:
-                logger.info("  ⊘ %s — model directory not found, skipping", meta.display_name)
-            meta.status = ModelStatus.DISABLED
-            return
-
-        meta.status = ModelStatus.LOADING
-        start = time.perf_counter()
-
-        try:
-            # LivePortrait is a multi-model bundle
-            # Attempt to import the package; if unavailable, skip gracefully
-            try:
-                from liveportrait import LivePortraitPipeline
-                self.liveportrait = LivePortraitPipeline(
-                    model_dir=meta.path,
-                    providers=gpu_manager.providers,
-                )
-            except ImportError:
-                logger.warning(
-                    "  ⚠ %s — liveportrait package not installed, skipping",
-                    meta.display_name,
-                )
-                meta.status = ModelStatus.DISABLED
-                return
-
-            elapsed = (time.perf_counter() - start) * 1000
-            meta.load_time_ms = round(elapsed, 2)
-            meta.status = ModelStatus.READY
-            logger.info(
-                "  ✓ %s loaded in %.1f ms",
-                meta.display_name,
-                elapsed,
-            )
-        except Exception as exc:
-            meta.status = ModelStatus.ERROR
-            meta.last_error = str(exc)
-            logger.warning("  ⚠ %s load failed: %s", meta.display_name, exc)
-
-    def _load_face_parser(self) -> None:
-        """Load BiSeNet face parsing model for semantic segmentation (optional)."""
-        meta = self.models["face_parser"]
-        if not meta.enabled or not os.path.exists(meta.path):
-            if meta.enabled:
-                logger.info("  ⊘ %s — model file not found, using landmark fallback", meta.display_name)
-            meta.status = ModelStatus.DISABLED
-            return
-
-        meta.status = ModelStatus.LOADING
-        start = time.perf_counter()
-
-        try:
-            import onnxruntime as ort
-
-            self.face_parser = ort.InferenceSession(
-                meta.path,
-                providers=gpu_manager.providers,
             )
             elapsed = (time.perf_counter() - start) * 1000
             meta.load_time_ms = round(elapsed, 2)
@@ -888,9 +713,6 @@ class ModelManager:
         """Check environment flags for optional models."""
         env_map = {
             "gfpgan_v14": "FACESWAP_ENABLE_GFPGAN",
-            "codeformer": "FACESWAP_ENABLE_CODEFORMER",
-            "liveportrait": "FACESWAP_ENABLE_LIVEPORTRAIT",
-            "face_parser": "FACESWAP_ENABLE_FACE_PARSER",
         }
         env_var = env_map.get(key)
         if env_var:
