@@ -1,12 +1,11 @@
 #!/bin/bash
 # ═══════════════════════════════════════════════════════════════
-#  FaceSwap AI — RunPod One-Command Setup
-#  Run this script on your RunPod GPU instance
+#  FaceSwap AI — RunPod One-Command Setup (Native, No Docker)
+#  RunPod PyTorch template already has Python 3.11 + CUDA + PyTorch
 # ═══════════════════════════════════════════════════════════════
-# No set -e — we handle errors manually
 
 echo "============================================"
-echo "  FaceSwap AI — RunPod Setup"
+echo "  FaceSwap AI — RunPod Setup (Native)"
 echo "============================================"
 
 # ── Step 1: Check GPU ─────────────────────────────────────────
@@ -19,61 +18,21 @@ else
     exit 1
 fi
 
-# ── Step 2: Check Docker ──────────────────────────────────────
-echo "Step 2: Checking Docker..."
-if ! command -v docker &> /dev/null; then
-    echo "  Installing Docker..."
-    curl -fsSL https://get.docker.com | sh
+# ── Step 2: Check Python ──────────────────────────────────────
+echo "Step 2: Checking Python..."
+if ! command -v python3 &> /dev/null; then
+    echo "  ✗ Python 3 not found!"
+    exit 1
 fi
-echo "  ✓ Docker installed"
+PY_VER=$(python3 --version 2>&1)
+echo "  ✓ $PY_VER"
 
-if ! docker compose version &> /dev/null; then
-    echo "  Installing Docker Compose..."
-    apt-get update && apt-get install -y docker-compose-plugin
-fi
-echo "  ✓ Docker Compose ready"
-
-# Start Docker daemon if not running (RunPod doesn't auto-start it)
-if ! docker info &> /dev/null; then
-    echo "  Starting Docker daemon..."
-    
-    # Try method 1: service command
-    service docker start > /tmp/dockerd.log 2>&1 || true
-    sleep 3
-    
-    # If still not running, try method 2: dockerd with DinD-compatible flags
-    if ! docker info &> /dev/null; then
-        echo "  Trying direct dockerd with container-compatible flags..."
-        dockerd \
-            --host=unix:///var/run/docker.sock \
-            --storage-driver=vfs \
-            --iptables=false \
-            --ip6tables=false \
-            --bridge=none \
-            --ip-masq=false \
-            > /tmp/dockerd.log 2>&1 &
-        sleep 5
-    fi
-    
-    # Wait up to 40s for daemon to be ready
-    for i in $(seq 1 20); do
-        if docker info &> /dev/null; then
-            echo "  ✓ Docker daemon started"
-            break
-        fi
-        sleep 2
-    done
-    
-    if ! docker info &> /dev/null; then
-        echo "  ✗ Docker daemon failed to start."
-        echo "  ── Last 30 lines of dockerd log ──"
-        tail -30 /tmp/dockerd.log 2>/dev/null || echo "  (no log found)"
-        echo "  ──────────────────────────────────"
-        exit 1
-    fi
-else
-    echo "  ✓ Docker daemon already running"
-fi
+echo "  Installing Python dependencies..."
+pip install --quiet --upgrade pip
+# Install all deps EXCEPT torch/torchvision (already in RunPod template)
+grep -v -E '^(torch|torchvision)==' requirements.txt > /tmp/req_nogpu.txt
+pip install --quiet -r /tmp/req_nogpu.txt
+echo "  ✓ Dependencies installed"
 
 # ── Step 3: Download AI Models ────────────────────────────────
 echo "Step 3: Downloading AI models..."
@@ -86,8 +45,7 @@ if [ ! -f "models/inswapper_128.onnx" ]; then
     if [ -s models/inswapper_128.onnx ]; then
         echo "  ✓ InSwapper model downloaded"
     else
-        echo "  ✗ InSwapper download FAILED! Check your internet connection."
-        echo "  Try manually: curl -L -o models/inswapper_128.onnx https://huggingface.co/ezk77/inswapper_128/resolve/main/inswapper_128.onnx"
+        echo "  ✗ InSwapper download FAILED!"
         exit 1
     fi
 else
@@ -108,12 +66,23 @@ else
     echo "  ✓ GFPGAN model already exists"
 fi
 
-# ── Step 4: Build & Start ─────────────────────────────────────
-echo "Step 4: Building and starting backend..."
-export DOCKER_BUILDKIT=0
-export COMPOSE_DOCKER_CLI_BUILD=0
-docker compose -f docker-compose.runpod.yml build --no-cache
-docker compose -f docker-compose.runpod.yml up -d
+# ── Step 4: Kill any old instance ─────────────────────────────
+echo "Step 4: Starting backend..."
+pkill -f "uvicorn main:app" 2>/dev/null || true
+sleep 1
+
+# ── Step 5: Start backend ─────────────────────────────────────
+export FACESWAP_HOST=0.0.0.0
+export FACESWAP_PORT=8000
+export FACESWAP_LOG_LEVEL=INFO
+export FACESWAP_CORS_ORIGINS='["*"]'
+export FACESWAP_ENABLE_TENSORRT=true
+export FACESWAP_ENABLE_FP16=true
+export FACESWAP_ENABLE_CUDA_GRAPH=true
+
+nohup python3 main.py > /tmp/faceswap.log 2>&1 &
+BACKEND_PID=$!
+echo "  ✓ Backend started (PID: $BACKEND_PID)"
 
 echo ""
 echo "Step 5: Waiting for backend to start (models loading, ~60-120s)..."
@@ -125,7 +94,6 @@ for i in $(seq 1 24); do
         echo "  ✓ Backend is LIVE!"
         echo "============================================"
         echo ""
-        # Get public IP
         PUBLIC_IP=$(curl -s http://checkip.amazonaws.com 2>/dev/null || echo "YOUR_POD_IP")
         echo "  Backend URL:  http://$PUBLIC_IP:8000"
         echo "  Health:       http://$PUBLIC_IP:8000/health"
@@ -136,7 +104,8 @@ for i in $(seq 1 24); do
         echo "  │  http://$PUBLIC_IP:8000            │"
         echo "  └─────────────────────────────────────────────┘"
         echo ""
-        echo "  View logs:  docker compose -f docker-compose.runpod.yml logs -f"
+        echo "  View logs:  tail -f /tmp/faceswap.log"
+        echo "  Stop:       kill $BACKEND_PID"
         echo "============================================"
         exit 0
     fi
@@ -145,6 +114,9 @@ for i in $(seq 1 24); do
 done
 
 echo ""
-echo "  ⚠ Backend not ready yet. Check logs:"
-echo "  docker compose -f docker-compose.runpod.yml logs -f"
+echo "  ⚠ Backend not ready yet. Last 30 lines of log:"
+echo "  ──────────────────────────────────────────────"
+tail -30 /tmp/faceswap.log 2>/dev/null
+echo "  ──────────────────────────────────────────────"
+echo "  Full log:  cat /tmp/faceswap.log"
 echo "============================================"
