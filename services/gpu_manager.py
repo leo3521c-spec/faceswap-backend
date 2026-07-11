@@ -128,7 +128,7 @@ class PinnedMemoryPool:
                     self._max_size,
                 )
                 return
-        except ImportError:
+        except Exception:
             pass
         self._torch = None
         self._enabled = False
@@ -201,7 +201,7 @@ class CUDAGraphManager:
                 self._enabled = True
                 logger.info("CUDA Graph manager initialized (PyTorch CUDA)")
                 return
-        except ImportError:
+        except Exception:
             pass
         self._torch = None
         logger.info("CUDA Graph manager disabled (no PyTorch CUDA)")
@@ -319,8 +319,9 @@ class GPUManager:
             import torch
             self._torch = torch
             torch_cuda_available = torch.cuda.is_available()
-        except ImportError:
-            logger.info("PyTorch not available — CPU-only mode")
+        except Exception:
+            logger.info("PyTorch CUDA unavailable (likely cuDNN mismatch) — using ONNX Runtime CUDA EP directly")
+            self._torch = None
 
         # 2 · Try NVML for monitoring
         try:
