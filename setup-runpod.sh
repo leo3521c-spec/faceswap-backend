@@ -3,7 +3,7 @@
 #  FaceSwap AI — RunPod One-Command Setup
 #  Run this script on your RunPod GPU instance
 # ═══════════════════════════════════════════════════════════════
-set -e
+# No set -e — we handle errors manually
 
 echo "============================================"
 echo "  FaceSwap AI — RunPod Setup"
@@ -41,18 +41,29 @@ mkdir -p models
 
 if [ ! -f "models/inswapper_128.onnx" ]; then
     echo "  Downloading InSwapper 128 model (~530MB)..."
-    wget -q -O models/inswapper_128.onnx \
+    curl -L --progress-bar -o models/inswapper_128.onnx \
         https://huggingface.co/ezk77/inswapper_128/resolve/main/inswapper_128.onnx
-    echo "  ✓ InSwapper model downloaded"
+    if [ -s models/inswapper_128.onnx ]; then
+        echo "  ✓ InSwapper model downloaded"
+    else
+        echo "  ✗ InSwapper download FAILED! Check your internet connection."
+        echo "  Try manually: curl -L -o models/inswapper_128.onnx https://huggingface.co/ezk77/inswapper_128/resolve/main/inswapper_128.onnx"
+        exit 1
+    fi
 else
     echo "  ✓ InSwapper model already exists"
 fi
 
 if [ ! -f "models/GFPGANv1.4.pth" ]; then
     echo "  Downloading GFPGAN enhancer model (~333MB)..."
-    wget -q -O models/GFPGANv1.4.pth \
+    curl -L --progress-bar -o models/GFPGANv1.4.pth \
         https://github.com/TencentARC/GFPGAN/releases/download/v1.3.4/GFPGANv1.4.pth
-    echo "  ✓ GFPGAN model downloaded"
+    if [ -s models/GFPGANv1.4.pth ]; then
+        echo "  ✓ GFPGAN model downloaded"
+    else
+        echo "  ✗ GFPGAN download FAILED!"
+        exit 1
+    fi
 else
     echo "  ✓ GFPGAN model already exists"
 fi
