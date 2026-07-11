@@ -753,6 +753,7 @@ async def _receive_source_face(websocket: WebSocket):
 
     # Binary JPEG
     if msg.get("bytes"):
+        logger.info("Received source face: %d bytes", len(msg["bytes"]))
         return await asyncio.to_thread(extract_source_face, msg["bytes"])
 
     # JSON text with base64
@@ -804,6 +805,7 @@ async def _run_swap_loop(
                     return
                 frame = msg.get("bytes")
                 if frame:
+                    logger.info("Received frame: %d bytes", len(frame))
                     pipeline.submit_frame(frame)
         except WebSocketDisconnect:
             return
@@ -824,6 +826,11 @@ async def _run_swap_loop(
                 )
                 pipeline.metrics.record_sent(frame_id, latency_ms)
 
+                logger.info(
+                    "Frame sent: id=%s, faces=%d, inference=%.1fms, jpeg=%d bytes",
+                    frame_id, result.face_count, result.inference_time_ms,
+                    len(result.jpeg_bytes),
+                )
                 # Send diagnostics as JSON text frame, then binary JPEG
                 await websocket.send_json(result.to_metadata())
                 await websocket.send_bytes(result.jpeg_bytes)
