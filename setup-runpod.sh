@@ -84,8 +84,42 @@ nohup python3 main.py > /tmp/faceswap.log 2>&1 &
 BACKEND_PID=$!
 echo "  ✓ Backend started (PID: $BACKEND_PID)"
 
+# ── Step 5b: Start Cloudflare Tunnel for HTTPS ────────────────
+# The app runs on HTTPS, so it needs wss:// (secure WebSocket).
+# Cloudflare Tunnel gives a free HTTPS URL that proxies to local HTTP.
+echo "Step 5b: Starting Cloudflare Tunnel (for HTTPS/WSS)..."
+pkill -f "cloudflared tunnel" 2>/dev/null || true
+
+if ! command -v cloudflared &> /dev/null; then
+    echo "  Installing cloudflared..."
+    curl -sL https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-linux-amd64 -o /usr/local/bin/cloudflared
+    chmod +x /usr/local/bin/cloudflared
+fi
+
+# Start tunnel in background, capture URL from log
+nohup cloudflared tunnel --url http://localhost:8000 > /tmp/cloudflared.log 2>&1 &
+TUNNEL_PID=$!
+echo "  ✓ Tunnel started (PID: $TUNNEL_PID), waiting for URL..."
+
+# Wait for tunnel URL to appear in log (up to 30s)
+TUNNEL_URL=""
+for i in $(seq 1 15); do
+    TUNNEL_URL=$(grep -oP 'https://[a-z0-9-]+\.trycloudflare\.com' /tmp/cloudflared.log 2>/dev/null | head -1)
+    if [ -n "$TUNNEL_URL" ]; then
+        break
+    fi
+    sleep 2
+done
+
+if [ -n "$TUNNEL_URL" ]; then
+    echo "  ✓ Tunnel URL: $TUNNEL_URL"
+else
+    echo "  ⚠ Tunnel URL not found yet. Check: cat /tmp/cloudflared.log"
+    TUNNEL_URL="https://CHECK_CLOUDFLARE_LOG"
+fi
+
 echo ""
-echo "Step 5: Waiting for backend to start (models loading, ~60-120s)..."
+        echo "Step 5: Waiting for backend to start (models loading, ~60-120s)..."
 echo "  Checking health..."
 for i in $(seq 1 24); do
     if curl -sf http://localhost:8000/health > /dev/null 2>&1; then
@@ -99,13 +133,22 @@ for i in $(seq 1 24); do
         echo "  Health:       http://$PUBLIC_IP:8000/health"
         echo "  WebSocket:    ws://$PUBLIC_IP:8000/ws/swap"
         echo ""
-        echo "  Paste this URL in your app's Settings → GPU Server URL:"
-        echo "  ┌─────────────────────────────────────────────┐"
-        echo "  │  http://$PUBLIC_IP:8000            │"
-        echo "  └─────────────────────────────────────────────┘"
+        echo "  ⚠ IMPORTANT: Use the HTTPS tunnel URL below (not the HTTP IP)."
+        echo "  The app runs on HTTPS, so ws:// will be blocked by the browser."
         echo ""
-        echo "  View logs:  tail -f /tmp/faceswap.log"
-        echo "  Stop:       kill $BACKEND_PID"
+        echo "  Paste this HTTPS URL in your app's Settings → GPU Server URL:"
+        echo "  ┌──────────────────────────────────────────────────────────────┐"
+        echo "  │  $TUNNEL_URL"
+        echo "  └──────────────────────────────────────────────────────────────┘"
+        echo ""
+        echo "  Backend (HTTP, local):  http://$PUBLIC_IP:8000"
+        echo "  Health:                 http://$PUBLIC_IP:8000/health"
+        echo "  WebSocket (WSS):        $TUNNEL_URL/ws/swap"
+        echo ""
+        echo "  View backend logs:   tail -f /tmp/faceswap.log"
+        echo "  View tunnel logs:    tail -f /tmp/cloudflared.log"
+        echo "  Stop backend:        kill $BACKEND_PID"
+        echo "  Stop tunnel:         kill $TUNNEL_PID"
         echo "============================================"
         exit 0
     fi
