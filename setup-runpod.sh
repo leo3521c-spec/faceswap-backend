@@ -24,13 +24,14 @@ echo "Step 2: Checking Docker..."
 if ! command -v docker &> /dev/null; then
     echo "  Installing Docker..."
     curl -fsSL https://get.docker.com | sh
-    sudo usermod -aG docker $USER
+    # Already root on RunPod — no sudo needed
+    :
 fi
 echo "  ✓ Docker ready"
 
 if ! docker compose version &> /dev/null; then
     echo "  Installing Docker Compose..."
-    sudo apt-get update && sudo apt-get install -y docker-compose-plugin
+    apt-get update && apt-get install -y docker-compose-plugin
 fi
 echo "  ✓ Docker Compose ready"
 
