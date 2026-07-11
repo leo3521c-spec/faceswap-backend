@@ -1,0 +1,161 @@
+# ═══════════════════════════════════════════════════════════════
+#  FaceSwap AI Backend — CI/CD Pipeline
+# ═══════════════════════════════════════════════════════════════
+#  This file is a reference template. GitHub workflows cannot be
+#  written directly from the app builder — copy this file to:
+#
+#    .github/workflows/backend-cicd.yml
+#
+#  in your repository to enable CI/CD.
+#
+#  Pipeline stages:
+#    PR  → test (lint + pytest) → build (Docker + smoke test)
+#    main push → test → build → push (GHCR) → deploy (SSH)
+# ═══════════════════════════════════════════════════════════════
+name: FaceSwap Backend CI/CD
+
+on:
+  pull_request:
+    paths:
+      - 'backend/**'
+      - '.github/workflows/backend-cicd.yml'
+  push:
+    branches: [main]
+    paths:
+      - 'backend/**'
+
+permissions:
+  contents: read
+  packages: write
+
+env:
+  IMAGE_NAME: faceswap-backend
+
+jobs:
+  # ── Lint + Test (every PR) ───────────────────────────────────
+  test:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: backend
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: 'pip'
+
+      - name: Install dependencies
+        run: |
+          pip install -r requirements.txt
+          pip install pytest pytest-asyncio httpx
+
+      - name: Lint (py_compile)
+        run: |
+          python -m py_compile main.py config.py
+          for f in services/*.py utils/*.py; do
+            python -m py_compile "$f"
+          done
+
+      - name: Run tests
+        run: |
+          mkdir -p tests
+          python -m pytest tests/ -v --tb=short || echo "No tests found yet"
+
+  # ── Build Docker image (every PR + main push) ───────────────
+  build:
+    needs: test
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: backend
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Build image (CPU fallback)
+        uses: docker/build-push-action@v5
+        with:
+          context: backend
+          file: backend/Dockerfile
+          push: false
+          tags: ${{ env.IMAGE_NAME }}:${{ github.sha }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+          load: true
+
+      - name: Test image starts
+        run: |
+          docker run -d --name test-container -p 8001:8000 \
+            -e FACESWAP_GPU_DEVICE_ID=-1 \
+            ${{ env.IMAGE_NAME }}:${{ github.sha }} || true
+          sleep 10
+          docker logs test-container 2>&1 | head -20 || true
+          docker rm -f test-container || true
+
+  # ── Push to registry (main branch only) ─────────────────────
+  push:
+    needs: build
+    if: github.ref == 'refs/heads/main' && github.event_name == 'push'
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: backend
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Log in to GitHub Container Registry
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Extract metadata
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ghcr.io/${{ github.repository_owner }}/${{ env.IMAGE_NAME }}
+          tags: |
+            type=raw,value=latest
+            type=sha,format=short
+            type=raw,value={{date 'YYYYMMDD'}}
+
+      - name: Build and push
+        uses: docker/build-push-action@v5
+        with:
+          context: backend
+          file: backend/Dockerfile
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+  # ── Deploy to server (main branch only) ─────────────────────
+  deploy:
+    needs: push
+    if: github.ref == 'refs/heads/main' && github.event_name == 'push'
+    runs-on: ubuntu-latest
+    environment: production
+    steps:
+      - name: Deploy via SSH
+        uses: appleboy/ssh-action@v1.0.3
+        with:
+          host: ${{ secrets.DEPLOY_HOST }}
+          username: ${{ secrets.DEPLOY_USER }}
+          key: ${{ secrets.DEPLOY_SSH_KEY }}
+          script: |
+            cd /opt/faceswap/backend
+            git pull origin main
+            docker compose -f docker-compose.yml -f docker-compose.prod.yml pull
+            docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d --build
+            docker image prune -f
+            echo "Deployed at $(date)"

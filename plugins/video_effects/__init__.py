@@ -1,0 +1,1 @@
+"""Video effect plugins — background removal, blur, filters."""

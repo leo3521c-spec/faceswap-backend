@@ -1,0 +1,25 @@
+# Logs
+logs/
+*.log
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.egg-info/
+.pytest_cache/
+.mypy_cache/
+
+# Environment
+.env
+.env.local
+
+# Models (large files — download separately)
+models/
+
+# SSL certificates
+nginx/ssl/
+
+# OS files
+.DS_Store
+Thumbs.db

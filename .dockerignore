@@ -1,0 +1,22 @@
+# Build context artifacts
+__pycache__
+*.pyc
+*.pyo
+.git
+.gitignore
+.env
+.env.*
+!.env.example
+*.md
+!DEPLOY.md
+docker-compose*.yml
+Dockerfile*
+.dockerignore
+.github/
+node_modules/
+src/
+*.egg-info
+.pytest_cache
+.mypy_cache
+tests/
+scripts/test_*

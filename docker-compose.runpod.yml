@@ -1,0 +1,42 @@
+# ═══════════════════════════════════════════════════════════════
+#  FaceSwap AI — RunPod Simplified Deployment
+#  Just the backend, no NGINX, no SSL — direct port 8000 access
+# ═══════════════════════════════════════════════════════════════
+services:
+  faceswap-backend:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: faceswap-backend
+    environment:
+      - FACESWAP_HOST=0.0.0.0
+      - FACESWAP_PORT=8000
+      - FACESWAP_LOG_LEVEL=INFO
+      - FACESWAP_CORS_ORIGINS=["*"]
+      - FACESWAP_ENABLE_TENSORRT=true
+      - FACESWAP_ENABLE_FP16=true
+      - FACESWAP_ENABLE_CUDA_GRAPH=true
+    ports:
+      - "8000:8000"
+    volumes:
+      - ./models:/app/models
+      - ./logs:/app/logs
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities: [gpu]
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-sf", "http://localhost:8000/health"]
+      interval: 30s
+      timeout: 10s
+      start_period: 120s
+      retries: 5
+    logging:
+      driver: json-file
+      options:
+        max-size: "50m"
+        max-file: "5"

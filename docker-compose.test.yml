@@ -1,0 +1,33 @@
+# ═══════════════════════════════════════════════════════════════
+#  FaceSwap AI — Testing Overlay
+#  CPU-only, no GPU, runs pytest then exits.
+#  Usage: docker compose -f docker-compose.yml -f docker-compose.test.yml up --abort-on-container-exit
+# ═══════════════════════════════════════════════════════════════
+
+services:
+  faceswap-backend:
+    environment:
+      - FACESWAP_HOST=0.0.0.0
+      - FACESWAP_PORT=8000
+      - FACESWAP_LOG_LEVEL=WARNING
+      - FACESWAP_ENABLE_TENSORRT=false
+      - FACESWAP_ENABLE_FP16=false
+    deploy:
+      resources:
+        limits:
+          memory: 4G
+        reservations: {}   # No GPU reservation in test
+    command:
+      - bash
+      - -c
+      - |
+        echo "Running test suite..."
+        python -m pytest tests/ -v --tb=short --junitxml=/app/logs/test-results.xml
+        echo "Tests complete."
+    restart: "no"
+
+  nginx:
+    profiles: ["dont-start"]
+
+  gpu-monitor:
+    profiles: ["dont-start"]

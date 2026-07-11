@@ -1,0 +1,36 @@
+# ═══════════════════════════════════════════════════════════════
+#  FaceSwap AI — Development Overlay
+#  Hot reload, debug logging, no GPU memory limits.
+#  Usage: docker compose -f docker-compose.yml -f docker-compose.dev.yml up
+# ═══════════════════════════════════════════════════════════════
+
+services:
+  faceswap-backend:
+    environment:
+      - FACESWAP_HOST=0.0.0.0
+      - FACESWAP_PORT=8000
+      - FACESWAP_LOG_LEVEL=DEBUG
+      - FACESWAP_CORS_ORIGINS=["*"]
+      - FACESWAP_ENABLE_TENSORRT=false
+      - FACESWAP_ENABLE_FP16=false
+      - FACESWAP_ENABLE_CUDA_GRAPH=false
+    volumes:
+      - ./models:/app/models
+      - ./logs:/app/logs
+      - ./scripts:/app/scripts:ro
+      - ./:/app           # Hot reload — mount source code
+    command:
+      - uvicorn
+      - main:app
+      - --host
+      - 0.0.0.0
+      - --port
+      - "8000"
+      - --reload          # Auto-restart on file changes
+      - --log-level
+      - debug
+    restart: "no"
+
+  nginx:
+    # Skip NGINX in dev — access backend directly
+    profiles: ["dont-start"]

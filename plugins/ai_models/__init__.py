@@ -1,0 +1,1 @@
+"""AI model plugins — face swap models, future AI models."""

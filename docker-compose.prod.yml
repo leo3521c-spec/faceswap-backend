@@ -1,0 +1,71 @@
+# ═══════════════════════════════════════════════════════════════
+#  FaceSwap AI — Production Overlay
+#  Usage: docker compose -f docker-compose.yml -f docker-compose.prod.yml up
+# ═══════════════════════════════════════════════════════════════
+
+services:
+  faceswap-backend:
+    environment:
+      - FACESWAP_HOST=0.0.0.0
+      - FACESWAP_PORT=8000
+      - FACESWAP_LOG_LEVEL=INFO
+      - FACESWAP_CORS_ORIGINS=["https://${FACESWAP_DOMAIN:-localhost}"]
+      - FACESWAP_ENABLE_TENSORRT=true
+      - FACESWAP_ENABLE_FP16=true
+      - FACESWAP_ENABLE_CUDA_GRAPH=true
+    deploy:
+      resources:
+        limits:
+          memory: 8G
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities: [gpu]
+    restart: always
+
+  nginx:
+    ports:
+      - "80:80"
+      - "443:443"
+    restart: always
+
+  # ── GPU Monitoring Sidecar ──────────────────────────────────
+  gpu-monitor:
+    image: nvidia/cuda:12.1.0-cudnn8-runtime-ubuntu22.04
+    container_name: faceswap-gpu-monitor
+    command: ["bash", "/app/scripts/gpu-monitor.sh"]
+    environment:
+      - FACESWAP_PORT=8000
+      - GPU_MONITOR_INTERVAL=5
+    volumes:
+      - ./scripts:/app/scripts:ro
+      - ./logs:/app/logs
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities: [gpu]
+    depends_on:
+      faceswap-backend:
+        condition: service_healthy
+    networks:
+      - faceswap-net
+    restart: unless-stopped
+    logging:
+      driver: json-file
+      options:
+        max-size: "20m"
+        max-file: "3"
+
+  # ── Watchtower: Auto-update images (optional) ───────────────
+  # Uncomment to enable automatic image updates
+  # watchtower:
+  #   image: containrrr/watchtower
+  #   container_name: faceswap-watchtower
+  #   volumes:
+  #     - /var/run/docker.sock:/var/run/docker.sock
+  #   command: --cleanup --interval 3600
+  #   restart: unless-stopped
