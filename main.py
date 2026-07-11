@@ -708,6 +708,20 @@ async def stream_platform(platform: str, body: dict):
     )
 
 
+@app.get("/logs")
+async def get_logs():
+    """Return the last 100 lines of the backend log."""
+    import subprocess
+    try:
+        result = subprocess.run(
+            ["tail", "-100", "/tmp/faceswap.log"],
+            capture_output=True, text=True, timeout=5,
+        )
+        return {"lines": result.stdout.splitlines()}
+    except Exception as exc:
+        return {"error": str(exc)}
+
+
 # ── WebSocket ───────────────────────────────────────────────
 
 @app.websocket(settings.websocket_path)
