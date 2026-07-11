@@ -39,7 +39,7 @@ class Settings(BaseSettings):
     masking_face_parser_size: int = 512  # BiSeNet input dimension
 
     # ── Expression Preservation ────────────────────────────
-    expression_enabled: bool = True
+    expression_enabled: bool = False  # Re-runs face detection per frame (1200ms) — disabled for speed
     expression_warp_strength: float = 1.0  # 0-2, how strongly to match expressions
     expression_grid_size: int = 32  # dense flow grid resolution
 
@@ -68,7 +68,7 @@ class Settings(BaseSettings):
     # ── GPU / ONNX ──────────────────────────────────────────
     gpu_device_id: int = -1  # -1 = auto-select best GPU
     gpu_mem_limit_mb: int = 4096  # ONNX arena memory limit
-    enable_tensorrt: bool = True  # Use TensorRT EP when available
+    enable_tensorrt: bool = False  # TensorRT rebuilds engines on every call — use CUDA EP instead
     enable_fp16: bool = True  # Half-precision inference
     enable_cuda_graph: bool = True  # CUDA Graph capture for fixed shapes
     enable_pinned_memory: bool = True  # Page-locked memory for fast transfers
