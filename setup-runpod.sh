@@ -110,7 +110,10 @@ fi
 
 # ── Step 4: Build & Start ─────────────────────────────────────
 echo "Step 4: Building and starting backend..."
-docker compose -f docker-compose.runpod.yml up -d --build
+export DOCKER_BUILDKIT=0
+export COMPOSE_DOCKER_CLI_BUILD=0
+docker compose -f docker-compose.runpod.yml build --no-cache
+docker compose -f docker-compose.runpod.yml up -d
 
 echo ""
 echo "Step 5: Waiting for backend to start (models loading, ~60-120s)..."
